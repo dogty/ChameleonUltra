@@ -1199,6 +1199,40 @@ static data_frame_tx_t *cmd_processor_hf14a_set_anti_coll_data(uint16_t cmd, uin
     offset++;
     memcpy(info->uid, &data[offset], *(info->size));
     offset += *(info->size);
+
+    // For MF0/NTAG tags, also update memory pages 0-2 to match the new UID
+    tag_slot_specific_type_t tag_types;
+    tag_emulation_get_specific_types_by_slot(tag_emulation_get_slot(), &tag_types);
+    switch (tag_types.tag_hf) {
+        case TAG_TYPE_NTAG_213:
+        case TAG_TYPE_NTAG_215:
+        case TAG_TYPE_NTAG_216: {
+            // Get the tag buffer to update memory pages
+            tag_data_buffer_t *buffer = get_buffer_by_tag_type(tag_types.tag_hf);
+            if (buffer != NULL) {
+                nfc_tag_mf0_ntag_information_t *ntag_info = (nfc_tag_mf0_ntag_information_t *)buffer->buffer;
+                    // Update page 0: UID bytes 0-2 + BCC1
+                    ntag_info->memory[0][0] = info->uid[0];
+                    ntag_info->memory[0][1] = info->uid[1];
+                    ntag_info->memory[0][2] = info->uid[2];
+                    // Calculate BCC0 = 0x88 ^ UID0 ^ UID1 ^ UID2
+                    ntag_info->memory[0][3] = 0x88 ^ info->uid[0] ^ info->uid[1] ^ info->uid[2];
+
+                    // Update page 1: UID bytes 3-6
+                    ntag_info->memory[1][0] = info->uid[3];
+                    ntag_info->memory[1][1] = info->uid[4];
+                    ntag_info->memory[1][2] = info->uid[5];
+                    ntag_info->memory[1][3] = info->uid[6];
+
+                    // Calculate BCC1 = UID3 ^ UID4 ^ UID5 ^ UID6
+                    ntag_info->memory[2][0] = info->uid[3] ^ info->uid[4] ^ info->uid[5] ^ info->uid[6];
+            }
+            break;
+        }
+        default:
+            break;
+    }
+
     memcpy(info->atqa, &data[offset], 2);
     offset += 2;
     info->sak[0] = data[offset];
