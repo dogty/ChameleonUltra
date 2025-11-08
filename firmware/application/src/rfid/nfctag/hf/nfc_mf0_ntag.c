@@ -266,7 +266,8 @@ static int get_block_max_by_tag_type(tag_specific_type_t tag_type, bool read) {
 
     uint8_t auth0 = m_tag_information->memory[first_cfg_page][CONF_AUTH0_BYTE];
     uint8_t access = m_tag_information->memory[first_cfg_page + 1][0];
-
+    if (auth0 == 0xFF)
+     m_tag_authenticated = true;
     NRF_LOG_INFO("auth0 %02x access %02x max_pages %02x first_cfg_page %02x authenticated %i", auth0, access, max_pages, first_cfg_page, m_tag_authenticated);
 
     if (!read || ((access & CONF_ACCESS_PROT) != 0)) return (max_pages > auth0) ? auth0 : max_pages;
