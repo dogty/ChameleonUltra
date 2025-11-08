@@ -1201,7 +1201,7 @@ bool nfc_tag_mf0_ntag_data_factory(uint8_t slot, tag_specific_type_t tag_type) {
     // default ntag data
     uint8_t default_p0[] = { 0x04, 0x68, 0x95, 0x71 };
     uint8_t default_p1[] = { 0xFA, 0x5C, 0x64, 0x80 };
-    uint8_t default_p2[] = { 0x42, 0x48, 0x0F, 0xE0 };
+    uint8_t default_p2[] = { 0x42, 0x48, 0x00, 0x00 };
 
     if (!is_ntag()) {
         default_p2[2] = 0;
@@ -1227,6 +1227,78 @@ bool nfc_tag_mf0_ntag_data_factory(uint8_t slot, tag_specific_type_t tag_type) {
             case 2:
                 memcpy(p_ntag_information->memory[block], default_p2, NFC_TAG_MF0_NTAG_DATA_SIZE);
                 break;
+            case 3:
+                // default OTP for Ultralight
+                memset(p_ntag_information->memory[block], 0x00, NFC_TAG_MF0_NTAG_DATA_SIZE);
+                if (is_ntag()) {
+                    switch(tag_type) {
+                        case TAG_TYPE_NTAG_213:
+                            p_ntag_information->memory[block][0] = 0xE1;
+                            p_ntag_information->memory[block][1] = 0x10;
+                            p_ntag_information->memory[block][2] = 0x12; // lock bits for NTAG213
+                            p_ntag_information->memory[block][3] = 0x00;
+                            break;
+                        case TAG_TYPE_NTAG_215:
+                            p_ntag_information->memory[block][0] = 0xE1;
+                            p_ntag_information->memory[block][1] = 0x10;
+                            p_ntag_information->memory[block][2] = 0x3E; // lock bits for NTAG215
+                            p_ntag_information->memory[block][3] = 0x00;
+                            break;
+                        case TAG_TYPE_NTAG_216:
+                            p_ntag_information->memory[block][0] = 0xE1;
+                            p_ntag_information->memory[block][1] = 0x10;
+                            p_ntag_information->memory[block][2] = 0x6D; // lock bits for NTAG216
+                            p_ntag_information->memory[block][3] = 0x00;
+                            break;
+                        default:
+                            memset(p_ntag_information->memory[block], 0x00, NFC_TAG_MF0_NTAG_DATA_SIZE);
+                            break;
+                    }
+                }
+                break;
+            case 4:
+                // default counter for Ultralight
+                memset(p_ntag_information->memory[block], 0x00, NFC_TAG_MF0_NTAG_DATA_SIZE);
+                if (is_ntag()) {
+                    switch(tag_type) {
+                        case TAG_TYPE_NTAG_213:
+                            p_ntag_information->memory[block][0] = 0x01;
+                            p_ntag_information->memory[block][1] = 0x03;
+                            p_ntag_information->memory[block][2] = 0xA0; // lock bits for NTAG213
+                            p_ntag_information->memory[block][3] = 0x0C;
+                            break;
+                        case TAG_TYPE_NTAG_215:
+                            p_ntag_information->memory[block][0] = 0x03;
+                            p_ntag_information->memory[block][1] = 0x00;
+                            p_ntag_information->memory[block][2] = 0xFE; // lock bits for NTAG215
+                            p_ntag_information->memory[block][3] = 0x00;
+                            break;
+                        case TAG_TYPE_NTAG_216:
+                            p_ntag_information->memory[block][0] = 0x03;
+                            p_ntag_information->memory[block][1] = 0x00;
+                            p_ntag_information->memory[block][2] = 0xFE; // lock bits for NTAG216
+                            p_ntag_information->memory[block][3] = 0x00;
+                            break;
+                        default:
+                            break;
+                    }
+                }
+                break;
+            case 5:
+                memset(p_ntag_information->memory[block], 0x00, NFC_TAG_MF0_NTAG_DATA_SIZE);
+                if (is_ntag()) {
+                    switch(tag_type) {
+                        case TAG_TYPE_NTAG_213:
+                            p_ntag_information->memory[block][0] = 0x34;
+                            p_ntag_information->memory[block][1] = 0x03;
+                            p_ntag_information->memory[block][2] = 0x00;
+                            p_ntag_information->memory[block][3] = 0xFE;
+                            break;
+                        default:
+                            break;
+                    }
+                }
+                break;
             default:
                 memset(p_ntag_information->memory[block], 0, NFC_TAG_MF0_NTAG_DATA_SIZE);
                 break;
@@ -1247,6 +1319,7 @@ bool nfc_tag_mf0_ntag_data_factory(uint8_t slot, tag_specific_type_t tag_type) {
             case TAG_TYPE_NTAG_215:
             case TAG_TYPE_NTAG_216:
                 p_ntag_information->memory[first_cfg_page][0] = 0x04; // set MIRROR to 0x04 (STRG_MOD_EN to 1)
+                p_ntag_information->memory[first_cfg_page-1][3] = 0xBD; // set RFUI in dynamic lock bytes to 0xBD
                 break;
             default:
                 ASSERT(false);
