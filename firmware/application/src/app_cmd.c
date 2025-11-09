@@ -1,4 +1,5 @@
 #include "fds_util.h"
+#include "fds_ids.h"
 #include "bsp_time.h"
 #include "bsp_delay.h"
 #include "usb_main.h"
@@ -14,6 +15,7 @@
 #include "settings.h"
 #include "delayed_reset.h"
 #include "netdata.h"
+#include "amiibo_crypto.h"
 
 
 #define NRF_LOG_MODULE_NAME app_cmd
@@ -22,6 +24,69 @@
 #include "nrf_log_default_backends.h"
 NRF_LOG_MODULE_REGISTER();
 
+#define AMIIBO_KEYS_SIZE 160
+
+// Temporary RAM buffer for amiibo keys during upload (dynamically allocated)
+// Allocated during upload, freed after flash write to save RAM
+static uint8_t *g_amiibo_keys_temp = NULL;
+
+// Global flag to indicate if amiibo keys are available in flash
+bool g_amiibo_keys_loaded = false;
+
+/**
+ * Initialize amiibo keys - check if they exist in flash
+ */
+void amiibo_keys_init(void) {
+    // Just check if keys exist in flash, don't load to RAM permanently
+    g_amiibo_keys_loaded = fds_is_exists(FDS_AMIIBO_KEYS_FILE_ID, FDS_AMIIBO_KEYS_RECORD_KEY);
+
+    if (g_amiibo_keys_loaded) {
+        NRF_LOG_INFO("Amiibo keys found in flash, re-encryption enabled");
+    } else {
+        NRF_LOG_WARNING("No amiibo keys found in flash, amiibo re-encryption disabled");
+    }
+}
+
+/**
+ * Load amiibo keys from flash into a temporary stack buffer
+ * @param buffer Pointer to 160-byte buffer to receive keys
+ * @return true if keys were loaded successfully
+ */
+static bool amiibo_keys_load_temp(uint8_t *buffer) {
+    if (!g_amiibo_keys_loaded) {
+        return false;
+    }
+    uint16_t length = AMIIBO_KEYS_SIZE;
+    bool ret = fds_read_sync(FDS_AMIIBO_KEYS_FILE_ID, FDS_AMIIBO_KEYS_RECORD_KEY, &length, buffer);
+    return ret && (length == AMIIBO_KEYS_SIZE);
+}
+
+/**
+ * Save amiibo keys from temporary RAM buffer to flash storage, then free the buffer
+ * @return true if saved successfully
+ */
+static bool amiibo_keys_save_to_flash(void) {
+    if (!g_amiibo_keys_temp) {
+        NRF_LOG_WARNING("No amiibo keys in temporary buffer to save");
+        return false;
+    }
+
+    bool ret = fds_write_sync(FDS_AMIIBO_KEYS_FILE_ID, FDS_AMIIBO_KEYS_RECORD_KEY, AMIIBO_KEYS_SIZE, (void *)g_amiibo_keys_temp);
+
+    if (ret) {
+        NRF_LOG_INFO("Amiibo keys saved to flash successfully");
+        g_amiibo_keys_loaded = true;
+    } else {
+        NRF_LOG_ERROR("Failed to save amiibo keys to flash");
+    }
+
+    // Free the temporary buffer regardless of success/failure
+    free(g_amiibo_keys_temp);
+    g_amiibo_keys_temp = NULL;
+    NRF_LOG_DEBUG("Temporary amiibo keys buffer freed");
+
+    return ret;
+}
 
 static void change_slot_auto(uint8_t slot_new) {
     uint8_t slot_now = tag_emulation_get_slot();
@@ -799,6 +864,17 @@ static data_frame_tx_t *cmd_processor_set_slot_enable(uint16_t cmd, uint16_t sta
 
 static data_frame_tx_t *cmd_processor_slot_data_config_save(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
     tag_emulation_save();
+
+    // Also save amiibo keys if they're in temporary buffer (uploaded but not yet saved)
+    if (g_amiibo_keys_temp) {
+        if (amiibo_keys_save_to_flash()) {
+            NRF_LOG_INFO("Amiibo keys saved to flash and temporary buffer freed");
+        } else {
+            NRF_LOG_WARNING("Failed to save amiibo keys to flash during slot save");
+            // Don't fail the whole operation if just amiibo keys fail
+        }
+    }
+
     return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
 }
 
@@ -1183,6 +1259,147 @@ static data_frame_tx_t *cmd_processor_mf0_ntag_reset_auth_cnt(uint16_t cmd, uint
     return data_frame_make(cmd, STATUS_SUCCESS, 1, &old_value);
 }
 
+/**
+ * @brief Update NTAG memory pages 0-2 with new UID and calculate BCC checksums
+ *
+ * @param ntag_info Pointer to NTAG information structure
+ * @param new_uid_7bytes Pointer to new 7-byte UID
+ */
+static void ntag_update_uid_in_memory(nfc_tag_mf0_ntag_information_t *ntag_info, const uint8_t *new_uid_7bytes) {
+    // Update page 0: UID bytes 0-2 + BCC0
+    ntag_info->memory[0][0] = new_uid_7bytes[0];
+    ntag_info->memory[0][1] = new_uid_7bytes[1];
+    ntag_info->memory[0][2] = new_uid_7bytes[2];
+    // Calculate BCC0 = 0x88 ^ UID0 ^ UID1 ^ UID2
+    ntag_info->memory[0][3] = 0x88 ^ new_uid_7bytes[0] ^ new_uid_7bytes[1] ^ new_uid_7bytes[2];
+
+    // Update page 1: UID bytes 3-6
+    ntag_info->memory[1][0] = new_uid_7bytes[3];
+    ntag_info->memory[1][1] = new_uid_7bytes[4];
+    ntag_info->memory[1][2] = new_uid_7bytes[5];
+    ntag_info->memory[1][3] = new_uid_7bytes[6];
+
+    // Calculate BCC1 = UID3 ^ UID4 ^ UID5 ^ UID6
+    ntag_info->memory[2][0] = new_uid_7bytes[3] ^ new_uid_7bytes[4] ^ new_uid_7bytes[5] ^ new_uid_7bytes[6];
+}
+
+/**
+ * @brief Convert NTAG memory structure to flat buffer
+ *
+ * @param ntag_info Pointer to NTAG information structure
+ * @param buffer Pointer to output buffer (must be at least 540 bytes for NTAG215)
+ * @param num_pages Number of pages to convert
+ */
+static void ntag_memory_to_buffer(const nfc_tag_mf0_ntag_information_t *ntag_info, uint8_t *buffer, int num_pages) {
+    for (int page = 0; page < num_pages; page++) {
+        for (int byte = 0; byte < 4; byte++) {
+            buffer[page * 4 + byte] = ntag_info->memory[page][byte];
+        }
+    }
+}
+
+/**
+ * @brief Convert flat buffer to NTAG memory structure
+ *
+ * @param buffer Pointer to input buffer
+ * @param ntag_info Pointer to NTAG information structure
+ * @param num_pages Number of pages to convert
+ */
+static void buffer_to_ntag_memory(const uint8_t *buffer, nfc_tag_mf0_ntag_information_t *ntag_info, int num_pages) {
+    for (int page = 0; page < num_pages; page++) {
+        for (int byte = 0; byte < 4; byte++) {
+            ntag_info->memory[page][byte] = buffer[page * 4 + byte];
+        }
+    }
+}
+
+/**
+ * @brief Update NTAG UID with automatic amiibo re-encryption
+ *
+ * This function updates the UID for NTAG213/215/216 tags and automatically
+ * handles amiibo re-encryption if the tag is a valid amiibo.
+ *
+ * @param new_uid_7bytes Pointer to new 7-byte UID
+ * @return true if successful, false on error
+ */
+bool ntag_update_uid_with_amiibo_reencrypt(uint8_t *new_uid_7bytes) {
+    // Get current slot tag type
+    tag_slot_specific_type_t tag_types;
+    tag_emulation_get_specific_types_by_slot(tag_emulation_get_slot(), &tag_types);
+
+    // Only support NTAG213/215/216
+    if (tag_types.tag_hf != TAG_TYPE_NTAG_213 &&
+        tag_types.tag_hf != TAG_TYPE_NTAG_215 &&
+        tag_types.tag_hf != TAG_TYPE_NTAG_216) {
+        return false;
+    }
+
+    // Get the tag buffer
+    tag_data_buffer_t *buffer = get_buffer_by_tag_type(tag_types.tag_hf);
+    if (buffer == NULL) {
+        return false;
+    }
+
+    nfc_tag_mf0_ntag_information_t *ntag_info = (nfc_tag_mf0_ntag_information_t *)buffer->buffer;
+
+    // CRITICAL: For Amiibo (NTAG215), we need to capture the tag buffer BEFORE modifying UID
+    // The encrypted data is bound to the original UID, so we need it for re-encryption
+    if (g_amiibo_keys_loaded && tag_types.tag_hf == TAG_TYPE_NTAG_215) {
+        uint8_t tag_buffer[540];
+        uint8_t old_uid[8];
+
+        // Convert memory to flat buffer BEFORE any modifications
+        ntag_memory_to_buffer(ntag_info, tag_buffer, 135);
+
+        // Extract old UID from the unmodified tag buffer
+        // For Amiibo crypto, we use the first 8 bytes directly (includes BCC0)
+        memcpy(old_uid, tag_buffer, 8);
+
+        // Check if this is an Amiibo
+        bool is_amiibo = amiibo_is_valid(tag_buffer);
+
+        if (is_amiibo) {
+            // Load keys from flash temporarily (only when we need them)
+            uint8_t amiibo_keys_temp[AMIIBO_KEYS_SIZE];
+            if (!amiibo_keys_load_temp(amiibo_keys_temp)) {
+                NRF_LOG_ERROR("Failed to load amiibo keys from flash");
+                return false;
+            }
+
+            // Update UID in memory pages 0-2 with BCC calculation
+            ntag_update_uid_in_memory(ntag_info, new_uid_7bytes);
+
+            // Construct 8-byte UID for crypto from updated NTAG memory
+            // Layout: UID[0-2], BCC0, UID[3-6]
+            uint8_t new_uid_8byte[8];
+            new_uid_8byte[0] = ntag_info->memory[0][0];
+            new_uid_8byte[1] = ntag_info->memory[0][1];
+            new_uid_8byte[2] = ntag_info->memory[0][2];
+            new_uid_8byte[3] = ntag_info->memory[0][3];  // BCC0
+            new_uid_8byte[4] = ntag_info->memory[1][0];
+            new_uid_8byte[5] = ntag_info->memory[1][1];
+            new_uid_8byte[6] = ntag_info->memory[1][2];
+            new_uid_8byte[7] = ntag_info->memory[1][3];
+
+            // Perform re-encryption with temporarily loaded keys
+            if (amiibo_reencrypt_with_new_uid(tag_buffer, new_uid_8byte, old_uid, amiibo_keys_temp)) {
+                // Copy back to NTAG memory structure
+                buffer_to_ntag_memory(tag_buffer, ntag_info, 135);
+                NRF_LOG_INFO("Amiibo re-encrypted successfully");
+            } else {
+                NRF_LOG_ERROR("Amiibo re-encryption failed");
+                return false;
+            }
+            return true;
+        }
+    }
+
+    // For non-amiibo tags or when amiibo mode is disabled, just update the UID
+    ntag_update_uid_in_memory(ntag_info, new_uid_7bytes);
+
+    return true;
+}
+
 static data_frame_tx_t *cmd_processor_hf14a_set_anti_coll_data(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
     // uidlen[1]|uid[uidlen]|atqa[2]|sak[1]|atslen[1]|ats[atslen]
     // dynamic length, so no struct
@@ -1201,37 +1418,8 @@ static data_frame_tx_t *cmd_processor_hf14a_set_anti_coll_data(uint16_t cmd, uin
     offset += *(info->size);
 
     // For MF0/NTAG tags, also update memory pages 0-2 to match the new UID
-    tag_slot_specific_type_t tag_types;
-    tag_emulation_get_specific_types_by_slot(tag_emulation_get_slot(), &tag_types);
-    switch (tag_types.tag_hf) {
-        case TAG_TYPE_NTAG_213:
-        case TAG_TYPE_NTAG_215:
-        case TAG_TYPE_NTAG_216: {
-            // Get the tag buffer to update memory pages
-            tag_data_buffer_t *buffer = get_buffer_by_tag_type(tag_types.tag_hf);
-            if (buffer != NULL) {
-                nfc_tag_mf0_ntag_information_t *ntag_info = (nfc_tag_mf0_ntag_information_t *)buffer->buffer;
-                    // Update page 0: UID bytes 0-2 + BCC1
-                    ntag_info->memory[0][0] = info->uid[0];
-                    ntag_info->memory[0][1] = info->uid[1];
-                    ntag_info->memory[0][2] = info->uid[2];
-                    // Calculate BCC0 = 0x88 ^ UID0 ^ UID1 ^ UID2
-                    ntag_info->memory[0][3] = 0x88 ^ info->uid[0] ^ info->uid[1] ^ info->uid[2];
-
-                    // Update page 1: UID bytes 3-6
-                    ntag_info->memory[1][0] = info->uid[3];
-                    ntag_info->memory[1][1] = info->uid[4];
-                    ntag_info->memory[1][2] = info->uid[5];
-                    ntag_info->memory[1][3] = info->uid[6];
-
-                    // Calculate BCC1 = UID3 ^ UID4 ^ UID5 ^ UID6
-                    ntag_info->memory[2][0] = info->uid[3] ^ info->uid[4] ^ info->uid[5] ^ info->uid[6];
-            }
-            break;
-        }
-        default:
-            break;
-    }
+    // Use the shared function that handles amiibo re-encryption automatically
+    ntag_update_uid_with_amiibo_reencrypt(info->uid);
 
     memcpy(info->atqa, &data[offset], 2);
     offset += 2;
@@ -1570,6 +1758,38 @@ static data_frame_tx_t *cmd_processor_mf0_get_emulator_config(uint16_t cmd, uint
     return data_frame_make(cmd, STATUS_SUCCESS, 3, mf0_info);
 }
 
+static data_frame_tx_t *cmd_processor_amiibo_set_keys(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    // Expect exactly 160 bytes of amiibo key data
+    if (length != AMIIBO_KEYS_SIZE) {
+        NRF_LOG_ERROR("Invalid amiibo keys size: %d (expected %d)", length, AMIIBO_KEYS_SIZE);
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+
+    // Free existing temporary buffer if any
+    if (g_amiibo_keys_temp) {
+        free(g_amiibo_keys_temp);
+        NRF_LOG_DEBUG("Freed previous temporary amiibo keys buffer");
+    }
+
+    // Allocate temporary buffer for keys (will be freed after flash write)
+    g_amiibo_keys_temp = (uint8_t *)malloc(AMIIBO_KEYS_SIZE);
+    if (!g_amiibo_keys_temp) {
+        NRF_LOG_ERROR("Failed to allocate memory for amiibo keys");
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+
+    // Copy keys to temporary buffer
+    memcpy(g_amiibo_keys_temp, data, AMIIBO_KEYS_SIZE);
+
+    NRF_LOG_INFO("Amiibo keys uploaded to temporary RAM buffer (%d bytes allocated)", AMIIBO_KEYS_SIZE);
+    return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
+}
+
+static data_frame_tx_t *cmd_processor_amiibo_get_keys_status(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    uint8_t keys_status = g_amiibo_keys_loaded ? 1 : 0;
+    return data_frame_make(cmd, STATUS_SUCCESS, sizeof(keys_status), &keys_status);
+}
+
 /**
  * (cmd -> processor) function map, the map struct is:
  *       cmd code                               before process               cmd processor                                after process
@@ -1691,6 +1911,8 @@ static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_HIDPROX_GET_EMU_ID,             NULL,                      cmd_processor_hidprox_get_emu_id,            NULL                   },
     {    DATA_CMD_VIKING_SET_EMU_ID,              NULL,                      cmd_processor_viking_set_emu_id,             NULL                   },
     {    DATA_CMD_VIKING_GET_EMU_ID,              NULL,                      cmd_processor_viking_get_emu_id,             NULL                   },
+    {    DATA_CMD_AMIIBO_SET_KEYS,                NULL,                      cmd_processor_amiibo_set_keys,               NULL                   },
+    {    DATA_CMD_AMIIBO_GET_KEYS_STATUS,         NULL,                      cmd_processor_amiibo_get_keys_status,        NULL                   },
 };
 
 data_frame_tx_t *cmd_processor_get_device_capabilities(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {

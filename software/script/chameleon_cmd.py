@@ -658,6 +658,44 @@ class ChameleonCMD:
         return resp
 
     @expect_response(Status.SUCCESS)
+    def amiibo_set_keys(self, keys_data: bytes):
+        """
+        Upload amiibo master keys to device and save to flash.
+        The keys are used for amiibo encryption/decryption operations.
+
+        :param keys_data: 160 bytes of amiibo master keys
+        :return: Response
+        :raises: ValueError if keys_data is not exactly 160 bytes
+        """
+        if len(keys_data) != 160:
+            raise ValueError(f"Amiibo keys must be exactly 160 bytes, got {len(keys_data)}")
+
+        return self.device.send_cmd_sync(Command.AMIIBO_SET_KEYS, keys_data)
+
+    def amiibo_get_keys_status(self):
+        """
+        Check if amiibo keys are loaded in the device.
+
+        :return: True if amiibo keys are loaded, False otherwise
+        """
+        resp = self.device.send_cmd_sync(Command.AMIIBO_GET_KEYS_STATUS)
+        return resp.data[0] == 1 if len(resp.data) > 0 else False
+
+    def amiibo_upload_keys_file(self, file_path: str):
+        """
+        Upload amiibo master keys from a .bin file to the device.
+
+        :param file_path: Path to the .bin file containing 160 bytes of amiibo keys
+        :return: Response
+        :raises: FileNotFoundError if file doesn't exist
+        :raises: ValueError if file is not exactly 160 bytes
+        """
+        with open(file_path, 'rb') as f:
+            keys_data = f.read()
+
+        return self.amiibo_set_keys(keys_data)
+
+    @expect_response(Status.SUCCESS)
     def mf1_set_detection_enable(self, enabled: bool):
         """
         Set whether to enable the detection of the current card slot.

@@ -3126,6 +3126,58 @@ class HFMFUEDetect(SlotIndexArgsAndGoUnit, DeviceRequiredUnit):
             print(f"{actual_index:3d}: {color_string((CY, password.upper()))}")
 
 
+@hf_mfu.command('amiibo')
+class HFMFUAmiiboKeys(DeviceRequiredUnit):
+    def args_parser(self) -> ArgumentParserNoExit:
+        parser = ArgumentParserNoExit()
+        parser.description = 'Upload amiibo master keys from file or check status'
+        parser.add_argument('-f', '--file', type=str, metavar="<file>",
+                            help="Path to amiibo keys .bin file (160 bytes)")
+        parser.add_argument('-s', '--status', action='store_true',
+                            help="Check if amiibo keys are loaded")
+        return parser
+
+    def on_exec(self, args: argparse.Namespace):
+        if args.status:
+            # Check if keys are loaded
+            status = self.cmd.amiibo_get_keys_status()
+            if status:
+                print(color_string((CG, "✓ Amiibo keys are loaded")))
+                print("  Amiibo re-encryption is enabled")
+                print("  UID changes on NTAG215 tags will automatically re-encrypt amiibo data")
+            else:
+                print(color_string((CR, "✗ No amiibo keys loaded")))
+                print("  Amiibo re-encryption is disabled")
+                print(f"  Upload keys with: {color_string((CY, 'hf mfu amiibo -f key_retail.bin'))}")
+        elif args.file:
+            # Upload keys to RAM, then save to flash (two-step process like tag data)
+            try:
+                print(f"Uploading amiibo keys from {args.file}...")
+
+                # Step 1: Upload keys to RAM (fast, no flash write)
+                self.cmd.amiibo_upload_keys_file(args.file)
+                print(color_string((CG, "✓ Amiibo keys loaded to RAM")))
+
+                # Step 2: Save to flash (use existing slot save command)
+                print("Saving to flash...")
+                self.cmd.slot_data_config_save()
+                print(color_string((CG, "✓ Keys saved to flash memory")))
+                print("  Amiibo re-encryption is now enabled")
+
+            except FileNotFoundError:
+                print(color_string((CR, f"✗ Error: File not found: {args.file}")))
+            except ValueError as e:
+                print(color_string((CR, f"✗ Error: {e}")))
+                print("  The file must be exactly 160 bytes (amiibo master keys)")
+            except Exception as e:
+                print(color_string((CR, f"✗ Error uploading keys: {e}")))
+        else:
+            # No arguments, show help
+            print("Usage:")
+            print(f"  Upload keys:  {color_string((CY, 'hf mfu amiibo -f key_retail.bin'))}")
+            print(f"  Check status: {color_string((CY, 'hf mfu amiibo -s'))}")
+
+
 @lf_em_410x.command('read')
 class LFEMRead(ReaderRequiredUnit):
     def args_parser(self) -> ArgumentParserNoExit:
