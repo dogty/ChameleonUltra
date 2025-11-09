@@ -130,6 +130,8 @@ class Command(enum.IntEnum):
     HIDPROX_GET_EMU_ID = 5003
     VIKING_SET_EMU_ID = 5004
     VIKING_GET_EMU_ID = 5005
+    AMIIBO_SET_KEYS = 4038
+    AMIIBO_GET_KEYS_STATUS = 4039
 
 
 @enum.unique
@@ -534,6 +536,7 @@ class ButtonPressFunction(enum.IntEnum):
     CLONE = 3
     BATTERY = 4
     FIELDGEN = 5
+    RANDOMUID = 6
 
     def __str__(self):
         if self == ButtonPressFunction.NONE:
@@ -548,6 +551,8 @@ class ButtonPressFunction(enum.IntEnum):
             return "Show Battery Level"
         elif self == ButtonPressFunction.FIELDGEN:
             return "Toggle NFC Field Generator"
+        elif self == ButtonPressFunction.RANDOMUID:
+            return "Generate random UID (NTAG/Amiibo)"
         return "None"
 
 @enum.unique

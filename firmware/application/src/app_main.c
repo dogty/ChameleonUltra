@@ -18,6 +18,7 @@
 #include "nrfx_power.h"
 #include "nrf_drv_lpcomp.h"
 #include "nrf_ble_lesc.h"
+#include "nrf_crypto.h"
 
 #define NRF_LOG_MODULE_NAME app_main
 #include "nrf_log.h"
@@ -40,6 +41,7 @@ NRF_LOG_MODULE_REGISTER();
 #include "rgb_marquee.h"
 #include "tag_persistence.h"
 #include "settings.h"
+#include "nfc_mf0_ntag.h"
 
 #if defined(PROJECT_CHAMELEON_ULTRA)
 #include "rc522.h"
@@ -780,6 +782,56 @@ static void btn_fn_copy_ic_uid(void) {
 
 #endif
 
+/**@brief Generate a random UID for amiibo/NTAG tags with LED blinking animation
+ */
+static void btn_fn_randomize_uid(void) {
+    // Generate random UID (7 bytes)
+    uint8_t new_uid[7];
+    ret_code_t err_code;
+    uint8_t available;
+
+    // Wait for RNG to have enough bytes
+    do {
+        nrf_drv_rng_bytes_available(&available);
+    } while (available < 7);
+
+    // Generate random bytes for UID
+    err_code = nrf_drv_rng_rand(new_uid, 7);
+    if (err_code != NRF_SUCCESS) {
+        NRF_LOG_ERROR("Failed to generate random UID");
+        offline_status_error();
+        return;
+    }
+
+    // Set manufacturer byte to 0x04 (NXP) - this is standard for NFC tags
+    new_uid[0] = 0x04;
+
+    NRF_LOG_INFO("Generated random UID");
+    NRF_LOG_HEXDUMP_INFO(new_uid, 7);
+
+    // Use the shared function to update UID with amiibo re-encryption
+    if (!ntag_update_uid_with_amiibo_reencrypt(new_uid)) {
+        NRF_LOG_ERROR("Failed to update UID (not an NTAG tag?)");
+        offline_status_error();
+        return;
+    }
+
+    // Also update the collision resolution data
+    nfc_tag_14a_coll_res_reference_t *coll_res = nfc_tag_mf0_ntag_get_coll_res();
+    if (coll_res != NULL && coll_res->uid != NULL && coll_res->size != NULL) {
+        *(coll_res->size) = NFC_TAG_14A_UID_DOUBLE_SIZE;  // 7 bytes for NTAG
+        memcpy(coll_res->uid, new_uid, 7);
+    }
+
+    // Save the changes to flash
+    tag_emulation_save();
+
+    NRF_LOG_INFO("Random UID generated and saved successfully");
+
+    // Blink to indicate success - this is synchronous and will complete before returning
+    offline_status_ok();
+}
+
 /**@brief Execute the corresponding logic based on the functional settings of the buttons.
  */
 static void run_button_function_by_settings(settings_button_function_t sbf) {
@@ -852,6 +904,10 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
 
         case SettingsButtonShowBattery:
             show_battery();
+            break;
+
+        case SettingsButtonRandomizeUid:
+            btn_fn_randomize_uid();
             break;
 
         default:
@@ -954,12 +1010,21 @@ int main(void) {
     usb_cdc_init();           // USB cdc emulation initialization
     ble_slave_init();         // Bluetooth protocol stack initialization
 
+    // Initialize nRF crypto library for Amiibo encryption
+    ret_code_t err_code = nrf_crypto_init();
+    if (err_code != NRF_SUCCESS) {
+        NRF_LOG_ERROR("nrf_crypto_init failed: 0x%08X", err_code);
+    } else {
+        NRF_LOG_INFO("nrf_crypto initialized successfully");
+    }
+
     rng_drv_and_srand_init(); // Random number generator initialization
     bsp_timer_init();         // Initialize timeout timer
     bsp_timer_start();        // Start BSP TIMER and prepare it for processing business logic
     button_init();            // Button initialization for handling business logic
     sleep_timer_init();       // Soft timer initialization for hibernation
     tag_emulation_init();     // Analog card initialization
+    amiibo_keys_init();       // Load amiibo keys from flash if available
     rgb_marquee_init();       // Light effect initialization
 
     ble_passkey_init();       // init ble connect key.

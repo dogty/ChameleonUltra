@@ -139,6 +139,8 @@
 #define DATA_CMD_MF0_NTAG_GET_DETECTION_LOG     (4035)
 #define DATA_CMD_MF0_NTAG_GET_DETECTION_ENABLE  (4036)
 #define DATA_CMD_MF0_NTAG_GET_EMULATOR_CONFIG   (4037)
+#define DATA_CMD_AMIIBO_SET_KEYS                (4038)
+#define DATA_CMD_AMIIBO_GET_KEYS_STATUS         (4039)
 //
 // ******************************************************************
 

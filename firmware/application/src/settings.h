@@ -28,6 +28,8 @@ typedef enum {
     SettingsButtonShowBattery = 4U,
     // Toggle NFC field generator on/off (Ultra only, must be in reader mode)
     SettingsButtonNfcFieldGenerator = 5U,
+    // Generate random UID for amiibo/NTAG tags
+    SettingsButtonRandomizeUid = 6U,
 } settings_button_function_t;
 
 typedef struct ALIGN_U32 {
