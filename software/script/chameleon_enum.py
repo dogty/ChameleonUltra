@@ -537,6 +537,7 @@ class ButtonPressFunction(enum.IntEnum):
     BATTERY = 4
     FIELDGEN = 5
     RANDOMUID = 6
+    RESET = 7
 
     def __str__(self):
         if self == ButtonPressFunction.NONE:
@@ -553,6 +554,8 @@ class ButtonPressFunction(enum.IntEnum):
             return "Toggle NFC Field Generator"
         elif self == ButtonPressFunction.RANDOMUID:
             return "Generate random UID (NTAG/Amiibo)"
+        elif self == ButtonPressFunction.RESET:
+            return "Reset factory"
         return "None"
 
 @enum.unique
