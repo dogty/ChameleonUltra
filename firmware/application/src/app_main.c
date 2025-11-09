@@ -780,7 +780,6 @@ static void btn_fn_copy_ic_uid(void) {
     }
 }
 
-#endif
 
 /**@brief Generate a random UID for amiibo/NTAG tags with LED blinking animation
  */
@@ -831,6 +830,35 @@ static void btn_fn_randomize_uid(void) {
     // Blink to indicate success - this is synchronous and will complete before returning
     offline_status_ok();
 }
+
+static bool ntag_factory_reset() {
+    // Get current slot tag type
+    tag_slot_specific_type_t tag_types;
+    tag_emulation_get_specific_types_by_slot(tag_emulation_get_slot(), &tag_types);
+
+    // Only support NTAG213/215/216
+    if (tag_types.tag_hf != TAG_TYPE_NTAG_213 &&
+        tag_types.tag_hf != TAG_TYPE_NTAG_215 &&
+        tag_types.tag_hf != TAG_TYPE_NTAG_216) {
+        return false;
+    }
+    return tag_emulation_factory_data(tag_emulation_get_slot(), tag_types.tag_hf);
+
+}
+
+// Fast factory reset current slot by scanning tags
+static void btn_fn_factory_reset(void) {
+
+    // Reset current slot to factory default values
+    if (!ntag_factory_reset()) {
+        NRF_LOG_ERROR("Failed to factory reset (not an NTAG tag?)");
+        offline_status_error();
+        return;
+    }
+    offline_status_ok();
+}
+
+#endif
 
 /**@brief Execute the corresponding logic based on the functional settings of the buttons.
  */
@@ -900,14 +928,16 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
                 NRF_LOG_INFO("Sleep timer restarted");
             }
             break;
+        case SettingsButtonRandomizeUid:
+            btn_fn_randomize_uid();
+            break;
+        case SettingsButtonFactoryReset:
+            btn_fn_factory_reset();
+            break;
 #endif
 
         case SettingsButtonShowBattery:
             show_battery();
-            break;
-
-        case SettingsButtonRandomizeUid:
-            btn_fn_randomize_uid();
             break;
 
         default:

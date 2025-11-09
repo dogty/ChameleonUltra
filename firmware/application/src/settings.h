@@ -30,6 +30,8 @@ typedef enum {
     SettingsButtonNfcFieldGenerator = 5U,
     // Generate random UID for amiibo/NTAG tags
     SettingsButtonRandomizeUid = 6U,
+    // Fast factory reset current slot by scanning tags
+    SettingsButtonFactoryReset = 7U,
 } settings_button_function_t;
 
 typedef struct ALIGN_U32 {
