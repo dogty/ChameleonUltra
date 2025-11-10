@@ -132,6 +132,8 @@ class Command(enum.IntEnum):
     VIKING_GET_EMU_ID = 5005
     AMIIBO_SET_KEYS = 4038
     AMIIBO_GET_KEYS_STATUS = 4039
+    AMIIBO_SET_MODE = 4040
+    AMIIBO_GET_MODE = 4041
 
 
 @enum.unique

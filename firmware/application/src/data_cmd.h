@@ -141,6 +141,8 @@
 #define DATA_CMD_MF0_NTAG_GET_EMULATOR_CONFIG   (4037)
 #define DATA_CMD_AMIIBO_SET_KEYS                (4038)
 #define DATA_CMD_AMIIBO_GET_KEYS_STATUS         (4039)
+#define DATA_CMD_AMIIBO_SET_MODE                (4040)
+#define DATA_CMD_AMIIBO_GET_MODE                (4041)
 //
 // ******************************************************************
 

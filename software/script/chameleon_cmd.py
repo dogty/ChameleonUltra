@@ -696,6 +696,34 @@ class ChameleonCMD:
         return self.amiibo_set_keys(keys_data)
 
     @expect_response(Status.SUCCESS)
+    def amiibo_set_mode(self, slot: SlotNumber, enabled: bool):
+        """
+        Enable or disable amiibo mode for a specific slot.
+        When enabled, amiibo re-encryption will be performed on UID changes (if keys are loaded).
+        When disabled, all amiibo functionality is bypassed for that slot.
+
+        :param slot: Slot number (1-8)
+        :param enabled: True to enable amiibo mode, False to disable
+        :return: Response
+        """
+        slot_index = SlotNumber.to_fw(slot)
+        mode = 1 if enabled else 0
+        data = struct.pack('!BB', slot_index, mode)
+        return self.device.send_cmd_sync(Command.AMIIBO_SET_MODE, data)
+
+    def amiibo_get_mode(self, slot: SlotNumber):
+        """
+        Get the amiibo mode status for a specific slot.
+
+        :param slot: Slot number (1-8)
+        :return: True if amiibo mode is enabled, False otherwise
+        """
+        slot_index = SlotNumber.to_fw(slot)
+        data = struct.pack('!B', slot_index)
+        resp = self.device.send_cmd_sync(Command.AMIIBO_GET_MODE, data)
+        return resp.data[0] == 1 if len(resp.data) > 0 else False
+
+    @expect_response(Status.SUCCESS)
     def mf1_set_detection_enable(self, enabled: bool):
         """
         Set whether to enable the detection of the current card slot.

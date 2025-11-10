@@ -67,14 +67,14 @@ static tag_slot_config_t slotConfig ALIGN_U32 = {
     // Configuration card slots
     // See tag_emulation_factory_init for actual tag content
     .slots = {
-        { .enabled_hf = true,  .enabled_lf = true,  .tag_hf = TAG_TYPE_MIFARE_1024, .tag_lf = TAG_TYPE_EM410X,    },  // 1
-        { .enabled_hf = true,  .enabled_lf = false, .tag_hf = TAG_TYPE_MF0ICU1,     .tag_lf = TAG_TYPE_UNDEFINED, },  // 2
-        { .enabled_hf = false, .enabled_lf = true,  .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_EM410X,    },  // 3
-        { .enabled_hf = false, .enabled_lf = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 4
-        { .enabled_hf = false, .enabled_lf = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 5
-        { .enabled_hf = false, .enabled_lf = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 6
-        { .enabled_hf = false, .enabled_lf = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 7
-        { .enabled_hf = false, .enabled_lf = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 8
+        { .enabled_hf = true,  .enabled_lf = true,  .amiibo_mode = false, .tag_hf = TAG_TYPE_MIFARE_1024, .tag_lf = TAG_TYPE_EM410X,    },  // 1
+        { .enabled_hf = true,  .enabled_lf = false, .amiibo_mode = false, .tag_hf = TAG_TYPE_MF0ICU1,     .tag_lf = TAG_TYPE_UNDEFINED, },  // 2
+        { .enabled_hf = false, .enabled_lf = true,  .amiibo_mode = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_EM410X,    },  // 3
+        { .enabled_hf = false, .enabled_lf = false, .amiibo_mode = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 4
+        { .enabled_hf = false, .enabled_lf = false, .amiibo_mode = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 5
+        { .enabled_hf = false, .enabled_lf = false, .amiibo_mode = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 6
+        { .enabled_hf = false, .enabled_lf = false, .amiibo_mode = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 7
+        { .enabled_hf = false, .enabled_lf = false, .amiibo_mode = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 8
     },
 };
 // The card slot configuration unique CRC, once the slot configuration changes, can be checked by CRC
@@ -471,6 +471,14 @@ static void tag_emulation_migrate_slot_config(void) {
         case 7:
             tag_emulation_migrate_slot_config_v0_to_v8();
 
+        case 8:
+            // Migrate from v8 to v9: add amiibo_mode field (default disabled)
+            NRF_LOG_INFO("Migrating slotConfig v8 to v9...");
+            for (uint8_t i = 0; i < TAG_MAX_SLOT_NUM; i++) {
+                slotConfig.slots[i].amiibo_mode = false;
+            }
+            slotConfig.version = TAG_SLOT_CONFIG_CURRENT_VERSION;
+
             /*
              * Add new migration steps ABOVE THIS COMMENT
              * `tag_emulation_save_config()` and `break` statements should only be used on the last migration step, all the previous steps must fall
@@ -615,6 +623,29 @@ void tag_emulation_slot_set_enable(uint8_t slot, tag_sense_type_t sense_type, bo
     if (sense_type == TAG_SENSE_HF) {
         slotConfig.slots[slot].enabled_hf = enable;
     }
+}
+
+/**
+ * Get the amiibo mode state for a slot
+ */
+bool tag_emulation_slot_get_amiibo_mode(uint8_t slot) {
+    return slotConfig.slots[slot].amiibo_mode;
+}
+
+/**
+ * Set the amiibo mode for a slot
+ * Note: When enabling, amiibo mode can only be set for NTAG215 tags
+ * When disabling, it works for any tag type
+ */
+void tag_emulation_slot_set_amiibo_mode(uint8_t slot, bool enable) {
+    // If enabling, verify it's an NTAG215
+    if (enable && slotConfig.slots[slot].tag_hf != TAG_TYPE_NTAG_215) {
+        NRF_LOG_WARNING("Cannot enable amiibo mode: slot %d is not NTAG215 (type: %d)",
+                        slot, slotConfig.slots[slot].tag_hf);
+        return; // Silently ignore invalid request
+    }
+
+    slotConfig.slots[slot].amiibo_mode = enable;
 }
 
 /**
