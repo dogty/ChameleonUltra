@@ -45,7 +45,7 @@ typedef struct {
  * This configuration can be preserved by persistently to Flash
  * 4 bytes a word, keep in mind the entire word alignment
  */
-#define TAG_SLOT_CONFIG_CURRENT_VERSION 8
+#define TAG_SLOT_CONFIG_CURRENT_VERSION 9
 // Intended struct size, for static assert
 #define TAG_SLOT_CONFIG_CURRENT_SIZE 68
 
@@ -54,10 +54,11 @@ typedef struct {
     uint8_t version;      // struct version (U8 so map on old .activated<=7 field)
     uint8_t active_slot;  // Which slot is currently active
     uint32_t : 0;         // U32 align
-    struct {              // 4-byte slot config + 2*2-byte tag_specific_types
+    struct {              // 4-byte slot config + 2*2-byte tag_specific_types + 4-byte amiibo_mode
         // Individual slot configuration
         uint32_t enabled_hf : 1;  // Whether to enable the HF card
         uint32_t enabled_lf : 1;  // Whether to enable the LF card
+        uint32_t amiibo_mode : 1; // Whether amiibo mode is enabled for this slot
         uint32_t : 0;             // U32 align
         // Specific type of emulated card
         union {
@@ -107,6 +108,10 @@ void tag_emulation_change_slot(uint8_t index, bool sense_disable);
 bool is_slot_enabled(uint8_t slot, tag_sense_type_t sense_type);
 // Set the card slot to enable
 void tag_emulation_slot_set_enable(uint8_t slot, tag_sense_type_t sense_type, bool enable);
+// Get the amiibo mode state for a slot
+bool tag_emulation_slot_get_amiibo_mode(uint8_t slot);
+// Set the amiibo mode for a slot
+void tag_emulation_slot_set_amiibo_mode(uint8_t slot, bool enable);
 // Get the emulation card type of the corresponding card slot
 void tag_emulation_get_specific_types_by_slot(uint8_t slot, tag_slot_specific_type_t *tag_types);
 // Initialize some factory data

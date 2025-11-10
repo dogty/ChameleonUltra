@@ -16,6 +16,7 @@
 #include "delayed_reset.h"
 #include "netdata.h"
 #include "amiibo_crypto.h"
+#include "tag_emulation.h"
 
 
 #define NRF_LOG_MODULE_NAME app_cmd
@@ -1344,7 +1345,10 @@ bool ntag_update_uid_with_amiibo_reencrypt(uint8_t *new_uid_7bytes) {
 
     // CRITICAL: For Amiibo (NTAG215), we need to capture the tag buffer BEFORE modifying UID
     // The encrypted data is bound to the original UID, so we need it for re-encryption
-    if (g_amiibo_keys_loaded && tag_types.tag_hf == TAG_TYPE_NTAG_215) {
+    uint8_t current_slot = tag_emulation_get_slot();
+    bool amiibo_mode_enabled = tag_emulation_slot_get_amiibo_mode(current_slot);
+
+    if (g_amiibo_keys_loaded && amiibo_mode_enabled && tag_types.tag_hf == TAG_TYPE_NTAG_215) {
         uint8_t tag_buffer[540];
         uint8_t old_uid[8];
 
@@ -1790,6 +1794,50 @@ static data_frame_tx_t *cmd_processor_amiibo_get_keys_status(uint16_t cmd, uint1
     return data_frame_make(cmd, STATUS_SUCCESS, sizeof(keys_status), &keys_status);
 }
 
+static data_frame_tx_t *cmd_processor_amiibo_set_mode(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    // Expect 2 bytes: slot number (1 byte) + mode (1 byte: 0=disabled, 1=enabled)
+    if (length != 2) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+
+    uint8_t slot = data[0];
+    uint8_t mode = data[1];
+
+    if (slot >= TAG_MAX_SLOT_NUM || mode > 1) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+
+    // Only allow amiibo mode for NTAG215 tags
+    tag_slot_specific_type_t tag_types;
+    tag_emulation_get_specific_types_by_slot(slot, &tag_types);
+
+    if (tag_types.tag_hf != TAG_TYPE_NTAG_215) {
+        NRF_LOG_WARNING("Amiibo mode can only be enabled for NTAG215 tags (slot %d is %d)", slot, tag_types.tag_hf);
+        return data_frame_make(cmd, STATUS_INVALID_SLOT_TYPE, 0, NULL);
+    }
+
+    tag_emulation_slot_set_amiibo_mode(slot, mode != 0);
+    NRF_LOG_INFO("Amiibo mode for slot %d set to %s", slot, mode ? "enabled" : "disabled");
+
+    return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
+}
+
+static data_frame_tx_t *cmd_processor_amiibo_get_mode(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    // Expect 1 byte: slot number
+    if (length != 1) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+
+    uint8_t slot = data[0];
+
+    if (slot >= TAG_MAX_SLOT_NUM) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+
+    uint8_t mode = tag_emulation_slot_get_amiibo_mode(slot) ? 1 : 0;
+    return data_frame_make(cmd, STATUS_SUCCESS, sizeof(mode), &mode);
+}
+
 /**
  * (cmd -> processor) function map, the map struct is:
  *       cmd code                               before process               cmd processor                                after process
@@ -1913,6 +1961,8 @@ static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_VIKING_GET_EMU_ID,              NULL,                      cmd_processor_viking_get_emu_id,             NULL                   },
     {    DATA_CMD_AMIIBO_SET_KEYS,                NULL,                      cmd_processor_amiibo_set_keys,               NULL                   },
     {    DATA_CMD_AMIIBO_GET_KEYS_STATUS,         NULL,                      cmd_processor_amiibo_get_keys_status,        NULL                   },
+    {    DATA_CMD_AMIIBO_SET_MODE,                NULL,                      cmd_processor_amiibo_set_mode,               NULL                   },
+    {    DATA_CMD_AMIIBO_GET_MODE,                NULL,                      cmd_processor_amiibo_get_mode,               NULL                   },
 };
 
 data_frame_tx_t *cmd_processor_get_device_capabilities(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {

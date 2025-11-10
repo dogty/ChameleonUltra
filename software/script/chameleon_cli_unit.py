@@ -3178,6 +3178,66 @@ class HFMFUAmiiboKeys(DeviceRequiredUnit):
             print(f"  Check status: {color_string((CY, 'hf mfu amiibo -s'))}")
 
 
+@hf_mfu.command('amode')
+class HFMFUAmiiboMode(DeviceRequiredUnit):
+    def args_parser(self) -> ArgumentParserNoExit:
+        parser = ArgumentParserNoExit()
+        parser.description = 'Enable or disable amiibo mode for a slot'
+        parser.add_argument('-s', '--slot', type=int, required=False, metavar="<1-8>",
+                            help="Slot number (defaults to current active slot)")
+        parser.add_argument('-e', '--enable', action='store_true',
+                            help="Enable amiibo mode for the slot")
+        parser.add_argument('-d', '--disable', action='store_true',
+                            help="Disable amiibo mode for the slot")
+        return parser
+
+    def on_exec(self, args: argparse.Namespace):
+        if args.slot is not None:
+            slot = args.slot
+            if not (1 <= slot <= 8):
+                print(color_string((CR, "✗ Slot must be between 1 and 8")))
+                return
+        else:
+            # Use current active slot
+            slot = self.cmd.get_active_slot()
+
+        if args.enable and args.disable:
+            print(color_string((CR, "✗ Cannot use --enable and --disable together")))
+            return
+
+        if args.enable:
+            # Enable amiibo mode
+            try:
+                self.cmd.amiibo_set_mode(slot, True)
+                print(color_string((CG, f"✓ Amiibo mode enabled for slot {slot}")))
+                print("  Amiibo re-encryption will be performed on UID changes (if keys are loaded)")
+                self.cmd.slot_data_config_save()
+                print(color_string((CG, "✓ Configuration saved to flash")))
+            except Exception as e:
+                print(color_string((CR, f"✗ Error: {e}")))
+                print(color_string((CR, "  Amiibo mode can only be enabled for NTAG215 tags")))
+                print(f"  Ensure slot {slot} is configured as NTAG215")
+                return
+        elif args.disable:
+            # Disable amiibo mode
+            self.cmd.amiibo_set_mode(slot, False)
+            print(color_string((CR, f"✓ Amiibo mode disabled for slot {slot}")))
+            print("  Amiibo functionality is bypassed for this slot")
+            self.cmd.slot_data_config_save()
+            print(color_string((CG, "✓ Configuration saved to flash")))
+        else:
+            # Check status
+            status = self.cmd.amiibo_get_mode(slot)
+            if status:
+                print(color_string((CG, f"✓ Amiibo mode is ENABLED for slot {slot}")))
+                print("  Amiibo re-encryption will be performed on UID changes")
+            else:
+                print(color_string((CR, f"✗ Amiibo mode is DISABLED for slot {slot}")))
+                print("  All amiibo functionality is bypassed")
+            print(f"\nTo enable:  {color_string((CY, f'hf mfu amode -s {slot} -e'))}")
+            print(f"To disable: {color_string((CY, f'hf mfu amode -s {slot} -d'))}")
+
+
 @lf_em_410x.command('read')
 class LFEMRead(ReaderRequiredUnit):
     def args_parser(self) -> ArgumentParserNoExit:
