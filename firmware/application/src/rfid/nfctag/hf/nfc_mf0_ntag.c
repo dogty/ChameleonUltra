@@ -1388,10 +1388,10 @@ bool nfc_tag_mf0_ntag_data_factory(uint8_t slot, tag_specific_type_t tag_type) {
     p_ntag_information->res_coll.uid[0] = 0x04;
     p_ntag_information->res_coll.uid[1] = 0x68;
     p_ntag_information->res_coll.uid[2] = 0x95;
-    p_ntag_information->res_coll.uid[3] = 0x71;
-    p_ntag_information->res_coll.uid[4] = 0xFA;
-    p_ntag_information->res_coll.uid[5] = 0x5C;
-    p_ntag_information->res_coll.uid[6] = 0x64;
+    p_ntag_information->res_coll.uid[3] = 0xFA;
+    p_ntag_information->res_coll.uid[4] = 0x5C;
+    p_ntag_information->res_coll.uid[5] = 0x64;
+    p_ntag_information->res_coll.uid[6] = 0x80;
     p_ntag_information->res_coll.size = NFC_TAG_14A_UID_DOUBLE_SIZE;
     p_ntag_information->res_coll.ats.length = 0;
 
