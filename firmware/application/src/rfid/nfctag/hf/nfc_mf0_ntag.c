@@ -1332,7 +1332,7 @@ bool nfc_tag_mf0_ntag_data_factory(uint8_t slot, tag_specific_type_t tag_type) {
     if (version_page > 0) {
         uint8_t *version_data = &p_ntag_information->memory[version_page][0];
 
-        switch (m_tag_type) {
+        switch (tag_type) {
             case TAG_TYPE_MF0UL11:
                 version_data[6] = MF0UL11_VERSION_STORAGE_SIZE;
                 version_data[2] = MF0ULx1_VERSION_PRODUCT_TYPE;
